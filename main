@@ -1,0 +1,91 @@
+ 
+#!/bin/bash
+
+############################################
+# SCRIPT CREATED BY: Laura Mora i Aubert   #
+# SCRIPT DATE: 2021-04-01                  #
+# WEBSITE: blackhold.nusepas.com           #
+# INFO: Script that checks domain ssl      #
+#       certificates                       #
+#       tested with openssl 1.1            #
+# LICENSE: creative commons (by:sa)        #
+############################################
+
+############################################
+#             INSTRUCTIONS                 #
+############################################
+#                                          #
+# 1. Create a file on /root/scripts/ with  #
+#    the content of this file              #
+# 2. Edit $ADMIN_MAIL with your mail       #
+# 3. Edit $DOMAINS array with your domains #
+# 3. Give permissions and run the script   #
+# 4. Put your script on /etc/crontab or    #
+#    /etc/cron.d/check_ssl with this line  #
+# # check ssl certificates
+# 0  7    * * *   root /root/scripts/check_certificates.sh > /var/log/ssl_checks/check_certificates-$(date "+\%Y\%m\%d").log && cat /var/log/ssl_checks/check_certificates-$(date "+\%Y\%m\%d").log |mail -s "[Check Certificates] your-server-name" your-admin-email@domain.com 
+#                                          #
+# That's all folks! have a nice day :)     #
+#                                          #
+# - Blackhold                              #
+#                                          #
+############################################
+
+ADMIN_MAIL="your-admin-email"
+DOMAINS=(
+# control domains
+"google.com"
+"expired.badssl.com"
+"wrong.host.badssl.com"
+# my domains
+"capa8.net"
+"aspertic.org"
+"cacavaca.capa8.net"
+)
+
+for DOMAIN in "${DOMAINS[@]}"
+do
+    echo "---------------------------"
+    echo "domain ${DOMAIN} is: "
+
+    touch check_ssl.txt
+    echo | openssl s_client -servername ${DOMAIN} -connect ${DOMAIN}:443 >> check_ssl.txt 2> /dev/null
+    if [ `cat check_ssl.txt |wc -l` != 0 ]
+    then
+        cat check_ssl.txt | openssl x509 -noout -dates >> check_ssl.txt
+    else	
+        echo "Verify return code: -1 (certificate does not exist)" >> check_ssl.txt
+    fi
+
+    # badssl.com
+    # ok: Verify return code: 0 (ok) / Extended master secret: yes
+    # expired: Verify return code: 10 (certificate has expired) / Extended master secret: no
+    # wrong.host:  Verify return code: 0 (ok) / Extended master secret: no
+    # self-signed: Verify return code: 18 (self signed certificate) / Extended master secret: no
+    # untrusted-root:     Verify return code: 19 (self signed certificate in certificate chain) / Extended master secret: no
+    # revoked: same as wrong.host
+    
+    RETURN_CODE=`cat check_ssl.txt |grep "return code"`
+
+    if [ `echo $RETURN_CODE |grep ok |wc -l` == 1 ]
+    then
+	MASTER=`cat check_ssl.txt |grep "Extended master secret"`
+	if [ `echo $MASTER |grep no |wc -l` == 1 ]
+	then
+	    echo "has problems error: wrong host"
+	else
+            echo "ok"
+	fi
+    else
+	ERROR=`cat check_ssl.txt |grep "return code"`
+        if [ `echo $ERROR |grep expired |wc -l` == 1 ]
+        then
+            EXPIRED=`cat check_ssl.txt |grep notAfter`
+	    IFS="=" read -a DATE_EXPIRED <<< $EXPIRED
+            echo "has problems: Domain expired on ${DATE_EXPIRED[1]}"
+        else
+            echo "has problems error: ${ERROR}"
+        fi
+    fi
+    rm check_ssl.txt
+done
